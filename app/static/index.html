@@ -1,0 +1,615 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MI50 GPU Monitor</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1:      #fcfcfb;
+    --page:           #f9f9f7;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --gridline:       #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+    --series-1:       #2a78d6; /* blue: sequential / primary series */
+    --status-good:    #0ca30c;
+    --status-warning: #fab219;
+    --status-serious: #ec835a;
+    --status-critical:#d03b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --surface-1:      #1a1a19;
+      --page:           #0d0d0d;
+      --text-primary:   #f0efec;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --gridline:       #2c2c2a;
+      --baseline:       #383835;
+      --border:         rgba(255,255,255,0.10);
+      --series-1:       #3987e5;
+      --status-good:    #0ca30c;
+      --status-warning: #fab219;
+      --status-serious: #ec835a;
+      --status-critical:#d03b3b;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: 16px;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; }
+
+  header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+  h1 { font-size: 18px; margin: 0; }
+  .sub { color: var(--text-secondary); font-size: 13px; }
+  .conn { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-secondary); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--status-good); }
+  .dot.off { background: var(--status-critical); }
+
+  .card {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 14px;
+  }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); margin: 0 0 12px; font-weight: 600; }
+
+  .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+  .tile .label { font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; }
+  .tile .value { font-size: 28px; font-variant-numeric: tabular-nums; margin-bottom: 8px; }
+  .status { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; }
+  .status svg { width: 13px; height: 13px; flex: none; }
+  .status.good { color: var(--status-good); }
+  .status.warning { color: var(--status-warning); }
+  .status.serious { color: var(--status-serious); }
+  .status.critical { color: var(--status-critical); }
+
+  .bar-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+  .bar-row .num { font-size: 20px; font-variant-numeric: tabular-nums; }
+  .bar-track { height: 10px; border-radius: 6px; background: var(--gridline); overflow: hidden; }
+  .bar-fill { height: 100%; background: var(--series-1); border-radius: 6px 0 0 6px; transition: width .4s; }
+
+  .fan-grid { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; }
+  .fan-readout { display: flex; gap: 20px; }
+  .fan-readout .num { font-size: 28px; font-variant-numeric: tabular-nums; }
+  .fan-readout .label { font-size: 12px; color: var(--text-secondary); }
+
+  .toggle-group { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .toggle-group button {
+    border: none; background: var(--surface-1); color: var(--text-secondary);
+    padding: 7px 14px; font-size: 13px; cursor: pointer; font-family: inherit;
+  }
+  .toggle-group button.active { background: var(--series-1); color: #fff; font-weight: 600; }
+
+  .slider-row { display: flex; align-items: center; gap: 12px; margin-top: 12px; width: 100%; }
+  input[type=range] { flex: 1; accent-color: var(--series-1); }
+  .slider-val { width: 44px; text-align: right; font-variant-numeric: tabular-nums; font-size: 14px; }
+
+  .note { font-size: 12px; color: var(--text-muted); margin-top: 10px; }
+
+  .model-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 0; border-bottom: 1px solid var(--gridline); gap: 12px; flex-wrap: wrap;
+  }
+  .model-row:last-child { border-bottom: none; }
+  .model-main { min-width: 0; flex: 1; }
+  .model-name { font-size: 14px; font-weight: 600; }
+  .model-desc { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+  .model-meta { font-size: 12px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+  .model-tags { display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
+  .model-tag { font-size: 11px; color: var(--text-secondary); background: var(--gridline); border-radius: 5px; padding: 1px 6px; }
+  .model-empty { font-size: 13px; color: var(--text-muted); padding: 6px 0; }
+  .model-actions { display: flex; gap: 6px; flex: none; }
+
+  .btn-sm {
+    border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary);
+    border-radius: 6px; padding: 5px 10px; font-size: 12px; cursor: pointer; font-family: inherit;
+  }
+  .btn-sm:hover { background: var(--gridline); }
+  .btn-sm:disabled { opacity: .5; cursor: default; }
+  .btn-sm.primary { background: var(--series-1); color: #fff; border-color: var(--series-1); }
+  .btn-sm.danger { color: var(--status-critical); border-color: var(--status-critical); }
+
+  .search-row { display: flex; gap: 8px; margin: 10px 0 14px; }
+  .search-row input {
+    flex: 1; border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary);
+    border-radius: 7px; padding: 8px 10px; font-size: 13px; font-family: inherit;
+  }
+  .search-row button {
+    border: 1px solid var(--series-1); background: var(--series-1); color: #fff;
+    border-radius: 7px; padding: 8px 16px; font-size: 13px; cursor: pointer; font-family: inherit;
+  }
+
+  .pull-row { padding: 8px 0; border-bottom: 1px solid var(--gridline); }
+  .pull-row:last-child { border-bottom: none; }
+  .pull-head { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px; }
+  .pull-head .name { font-weight: 600; color: var(--text-primary); }
+  .pull-head .status { color: var(--text-secondary); }
+
+  .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .chart-title { font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; display: flex; justify-content: space-between; }
+  canvas { width: 100%; height: 90px; display: block; }
+
+  .error-banner {
+    display: none;
+    background: var(--status-critical);
+    color: #fff;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    margin-bottom: 14px;
+  }
+
+  @media (max-width: 560px) {
+    .tiles { grid-template-columns: 1fr; }
+    .charts { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1 id="gpuName">GPU Monitor</h1>
+      <div class="sub">即時溫度、顯存與風扇控制</div>
+    </div>
+    <div class="conn"><span class="dot" id="connDot"></span><span id="connLabel">connecting…</span></div>
+  </header>
+
+  <div class="error-banner" id="errorBanner"></div>
+
+  <div class="tiles">
+    <div class="tile">
+      <div class="label">Edge 溫度</div>
+      <div class="value" id="tempEdge">--°C</div>
+      <div class="status good" id="statusEdge"></div>
+    </div>
+    <div class="tile">
+      <div class="label">Junction 溫度</div>
+      <div class="value" id="tempJunction">--°C</div>
+      <div class="status good" id="statusJunction"></div>
+    </div>
+    <div class="tile">
+      <div class="label">Memory 溫度</div>
+      <div class="value" id="tempMem">--°C</div>
+      <div class="status good" id="statusMem"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>VRAM 使用量</h2>
+    <div class="bar-row">
+      <span class="num" id="vramNum">-- / -- GB</span>
+      <span class="num" id="vramPct">--%</span>
+    </div>
+    <div class="bar-track"><div class="bar-fill" id="vramBar" style="width:0%"></div></div>
+    <div class="bar-row" style="margin-top:14px">
+      <span class="num" id="gpuUtilLabel">GPU 運算使用率</span>
+      <span class="num" id="gpuUtilPct">--%</span>
+    </div>
+    <div class="bar-track"><div class="bar-fill" id="gpuUtilBar" style="width:0%"></div></div>
+  </div>
+
+  <div class="card">
+    <h2>風扇控制（GPU 散熱風扇 · 主機板 CPU_FAN 接頭）</h2>
+    <div id="fanUnavailable" class="note" style="display:none">
+      偵測不到主機板感測晶片，無法控制風扇（只能看溫度/VRAM）。請確認主機已載入對應的 hwmon 驅動（例如 <code>modprobe nct6775</code>）。
+    </div>
+    <div id="fanControls">
+      <div class="fan-grid">
+        <div class="fan-readout">
+          <div><div class="num" id="fanPercent">--%</div><div class="label">轉速</div></div>
+          <div><div class="num" id="fanRpm">--</div><div class="label">RPM</div></div>
+          <div><div class="num" id="cpuFanRpm">--</div><div class="label">CPU 風扇 RPM（SYS_FAN，僅顯示）</div></div>
+        </div>
+        <div class="toggle-group">
+          <button id="btnAuto" class="active">自動</button>
+          <button id="btnManual">手動</button>
+        </div>
+      </div>
+      <div class="slider-row" id="sliderRow" style="display:none">
+        <input type="range" id="fanSlider" min="20" max="100" value="50">
+        <div class="slider-val" id="sliderVal">50%</div>
+      </div>
+      <div class="note" id="safetyNote"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>歷史紀錄（最近 2 分鐘）</h2>
+    <div class="charts">
+      <div>
+        <div class="chart-title"><span>Junction 溫度</span><span id="chartTempRange" class="sub"></span></div>
+        <canvas id="chartTemp"></canvas>
+      </div>
+      <div>
+        <div class="chart-title"><span>風扇轉速</span><span id="chartFanRange" class="sub"></span></div>
+        <canvas id="chartFan"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Ollama 狀態</h2>
+    <div id="ollamaUnavailable" class="note" style="display:none">
+      連不到本機 Ollama 服務（<span id="ollamaUrl"></span>）。確認 <code>ollama serve</code> 有在跑。
+    </div>
+    <div id="ollamaInfo" style="display:none">
+      <div class="sub" id="ollamaVersion" style="margin-bottom:10px"></div>
+      <div class="label" style="margin-bottom:6px">執行中的模型</div>
+      <div id="ollamaRunning"></div>
+      <div class="label" style="margin:14px 0 6px">已下載的模型</div>
+      <div id="ollamaInstalled"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>搜尋 / 下載模型</h2>
+    <div class="note" style="margin-top:0">
+      搜尋結果來自 ollama.com 網站（非官方 API，頁面改版可能會失效），下載會直接呼叫本機 <code>ollama pull</code>。
+    </div>
+    <div class="search-row">
+      <input type="text" id="searchInput" placeholder="例如：llama3.2、qwen、gemma" autocomplete="off">
+      <button id="btnSearch">搜尋</button>
+    </div>
+    <div id="searchResults"></div>
+
+    <div id="pullJobs" style="display:none">
+      <div class="label" style="margin:14px 0 6px">下載進度</div>
+      <div id="pullJobsList"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const POLL_MS = 2000;
+const HISTORY_LEN = 60;
+const tempHistory = [];
+const fanHistory = [];
+let manualPercent = 50;
+let fanMinPercent = 20;
+let currentMode = "auto";
+
+function iconFor(status) {
+  const icons = {
+    good: '<svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><path d="M5 8l2 2 4-4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    warning: '<svg viewBox="0 0 16 16" fill="none"><path d="M8 2l6.5 11.5H1.5L8 2z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8 6.5v3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="11.3" r="0.9" fill="currentColor"/></svg>',
+    serious: '<svg viewBox="0 0 16 16" fill="none"><path d="M8 2l6.5 11.5H1.5L8 2z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8 6.5v3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="11.3" r="0.9" fill="currentColor"/></svg>',
+    critical: '<svg viewBox="0 0 16 16" fill="none"><rect x="2" y="2" width="12" height="12" rx="3" stroke="currentColor" stroke-width="1.5"/><path d="M6 6l4 4M10 6l-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
+  };
+  return icons[status];
+}
+
+function statusFor(tempC) {
+  if (tempC >= 90) return ["critical", "過熱"];
+  if (tempC >= 80) return ["serious", "偏高"];
+  if (tempC >= 70) return ["warning", "溫熱"];
+  return ["good", "正常"];
+}
+
+function setTile(valueId, statusId, tempC) {
+  document.getElementById(valueId).textContent = tempC != null ? tempC.toFixed(1) + "°C" : "--°C";
+  const el = document.getElementById(statusId);
+  if (tempC == null) { el.innerHTML = ""; return; }
+  const [status, label] = statusFor(tempC);
+  el.className = "status " + status;
+  el.innerHTML = iconFor(status) + "<span>" + label + "</span>";
+}
+
+function drawSparkline(canvas, data, color) {
+  const ctx = canvas.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  canvas.width = w * dpr; canvas.height = h * dpr;
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, w, h);
+  const gridline = getComputedStyle(document.documentElement).getPropertyValue("--gridline").trim();
+  ctx.strokeStyle = gridline;
+  ctx.lineWidth = 1;
+  for (let i = 1; i < 3; i++) {
+    const y = (h / 3) * i;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+  }
+  if (data.length < 2) return;
+  const min = Math.min(...data), max = Math.max(...data);
+  const range = Math.max(max - min, 1);
+  const pad = 6;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  data.forEach((v, i) => {
+    const x = (i / (HISTORY_LEN - 1)) * w;
+    const y = pad + (1 - (v - min) / range) * (h - pad * 2);
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+}
+
+function pushHistory(arr, val) {
+  arr.push(val);
+  if (arr.length > HISTORY_LEN) arr.shift();
+}
+
+function formatGb(bytes) {
+  return (bytes / 1024 ** 3).toFixed(1) + " GB";
+}
+
+function formatEta(isoString) {
+  const ms = new Date(isoString).getTime() - Date.now();
+  if (!isFinite(ms)) return "";
+  if (ms <= 0) return "即將釋放";
+  const min = Math.round(ms / 60000);
+  return min < 1 ? "<1 分鐘後釋放" : min + " 分鐘後釋放";
+}
+
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+function renderOllama(ollama) {
+  const unavailable = document.getElementById("ollamaUnavailable");
+  const info = document.getElementById("ollamaInfo");
+  if (!ollama || !ollama.available) {
+    unavailable.style.display = "block";
+    info.style.display = "none";
+    document.getElementById("ollamaUrl").textContent = (ollama && ollama.error) || "";
+    return;
+  }
+  unavailable.style.display = "none";
+  info.style.display = "block";
+  document.getElementById("ollamaVersion").textContent = "版本 " + ollama.version;
+
+  const runningNames = new Set(ollama.running.map(m => m.name));
+
+  const running = document.getElementById("ollamaRunning");
+  running.innerHTML = ollama.running.length
+    ? ollama.running.map(m => `
+        <div class="model-row">
+          <div class="model-main">
+            <div class="model-name">${esc(m.name)}</div>
+            <div class="model-desc">${formatGb(m.size_vram ?? m.size)} VRAM &middot; ${formatEta(m.expires_at)}</div>
+          </div>
+          <div class="model-actions">
+            <button class="btn-sm danger" data-action="eject" data-model="${esc(m.name)}">卸載</button>
+          </div>
+        </div>`).join("")
+    : '<div class="model-empty">目前沒有模型載入</div>';
+
+  const installed = document.getElementById("ollamaInstalled");
+  installed.innerHTML = ollama.installed.length
+    ? ollama.installed.map(m => {
+        const isRunning = runningNames.has(m.name);
+        return `
+        <div class="model-row">
+          <div class="model-main">
+            <div class="model-name">${esc(m.name)}</div>
+            <div class="model-desc">${formatGb(m.size)} &middot; ${esc(m.details?.quantization_level ?? "")}</div>
+          </div>
+          <div class="model-actions">
+            <button class="btn-sm primary" data-action="load" data-model="${esc(m.name)}" ${isRunning ? "disabled" : ""}>載入</button>
+            <button class="btn-sm danger" data-action="eject" data-model="${esc(m.name)}" ${isRunning ? "" : "disabled"}>卸載</button>
+          </div>
+        </div>`;
+      }).join("")
+    : '<div class="model-empty">尚未下載任何模型</div>';
+}
+
+async function modelAction(action, model, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    await fetch(`/api/models/${action}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model }),
+    });
+  } finally {
+    refresh();
+  }
+}
+
+document.getElementById("ollamaInfo").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-action]");
+  if (!btn) return;
+  modelAction(btn.dataset.action, btn.dataset.model, btn);
+});
+
+async function runSearch() {
+  const q = document.getElementById("searchInput").value.trim();
+  const resultsEl = document.getElementById("searchResults");
+  if (!q) { resultsEl.innerHTML = ""; return; }
+  resultsEl.innerHTML = '<div class="model-empty">搜尋中…</div>';
+  try {
+    const res = await fetch("/api/models/search?q=" + encodeURIComponent(q));
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || ("HTTP " + res.status));
+    }
+    const { results } = await res.json();
+    resultsEl.innerHTML = results.length
+      ? results.map(m => `
+          <div class="model-row">
+            <div class="model-main">
+              <div class="model-name">${esc(m.name)}</div>
+              <div class="model-desc">${esc(m.description)}</div>
+              <div class="model-tags">${m.tags.map(t => `<span class="model-tag">${esc(t)}</span>`).join("")}</div>
+            </div>
+            <div class="model-actions">
+              <button class="btn-sm primary" data-action="pull" data-model="${esc(m.name)}">下載</button>
+            </div>
+          </div>`).join("")
+      : '<div class="model-empty">沒有找到符合的模型</div>';
+  } catch (err) {
+    resultsEl.innerHTML = '<div class="model-empty">搜尋失敗：' + esc(err.message) + '</div>';
+  }
+}
+
+document.getElementById("btnSearch").addEventListener("click", runSearch);
+document.getElementById("searchInput").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") runSearch();
+});
+
+document.getElementById("searchResults").addEventListener("click", async (e) => {
+  const btn = e.target.closest("button[data-action='pull']");
+  if (!btn) return;
+  btn.disabled = true;
+  btn.textContent = "已加入下載";
+  await fetch("/api/models/pull", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model: btn.dataset.model }),
+  });
+  pollPullJobs();
+});
+
+function formatBytesShort(n) {
+  if (!n) return "0 MB";
+  const gb = n / 1024 ** 3;
+  return gb >= 1 ? gb.toFixed(1) + " GB" : (n / 1024 ** 2).toFixed(0) + " MB";
+}
+
+async function pollPullJobs() {
+  const container = document.getElementById("pullJobs");
+  const list = document.getElementById("pullJobsList");
+  try {
+    const res = await fetch("/api/models/pull/status");
+    const jobs = await res.json();
+    const names = Object.keys(jobs);
+    if (!names.length) { container.style.display = "none"; return; }
+    container.style.display = "block";
+    list.innerHTML = names.map(name => {
+      const j = jobs[name];
+      const pct = j.total ? Math.round((j.completed / j.total) * 100) : (j.done ? 100 : 0);
+      const statusText = j.error ? "錯誤：" + j.error : (j.done ? "完成" : `${j.status} (${formatBytesShort(j.completed)} / ${formatBytesShort(j.total)})`);
+      return `
+        <div class="pull-row">
+          <div class="pull-head"><span class="name">${esc(name)}</span><span class="status">${esc(statusText)}</span></div>
+          <div class="bar-track"><div class="bar-fill" style="width:${pct}%; background:${j.error ? "var(--status-critical)" : "var(--series-1)"}"></div></div>
+        </div>`;
+    }).join("");
+    if (names.some(n => jobs[n].done)) refresh();
+  } catch (err) {
+    // transient; next poll will retry
+  }
+}
+
+async function refresh() {
+  try {
+    const res = await fetch("/api/stats");
+    const connDot = document.getElementById("connDot");
+    const connLabel = document.getElementById("connLabel");
+    const errorBanner = document.getElementById("errorBanner");
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || ("HTTP " + res.status));
+    }
+    const s = await res.json();
+    errorBanner.style.display = "none";
+    connDot.classList.remove("off");
+    connLabel.textContent = "已連線";
+
+    document.getElementById("gpuName").textContent = s.name;
+    fanMinPercent = s.fan_min_percent;
+    document.getElementById("fanSlider").min = fanMinPercent;
+
+    setTile("tempEdge", "statusEdge", s.temps.edge);
+    setTile("tempJunction", "statusJunction", s.temps.junction);
+    setTile("tempMem", "statusMem", s.temps.mem);
+
+    const vramUsedGb = s.vram_used / 1024 ** 3;
+    const vramTotalGb = s.vram_total / 1024 ** 3;
+    const pct = (s.vram_used / s.vram_total) * 100;
+    document.getElementById("vramNum").textContent = vramUsedGb.toFixed(1) + " / " + vramTotalGb.toFixed(1) + " GB";
+    document.getElementById("vramPct").textContent = pct.toFixed(1) + "%";
+    document.getElementById("vramBar").style.width = pct.toFixed(1) + "%";
+
+    const util = s.gpu_busy_percent;
+    document.getElementById("gpuUtilPct").textContent = util != null ? util + "%" : "--%";
+    document.getElementById("gpuUtilBar").style.width = (util ?? 0) + "%";
+
+    renderOllama(s.ollama);
+
+    document.getElementById("fanUnavailable").style.display = s.board_fan_available ? "none" : "block";
+    document.getElementById("fanControls").style.display = s.board_fan_available ? "block" : "none";
+
+    if (s.board_fan_available) {
+      document.getElementById("safetyNote").textContent =
+        `安全機制：手動模式下若 Junction 溫度達 ${s.safety_temp_c}°C 會自動拉滿風扇，達 ${s.critical_temp_c}°C 會強制切回自動模式。手動轉速下限 ${fanMinPercent}%。`;
+
+      document.getElementById("fanPercent").textContent = s.fan_percent + "%";
+      document.getElementById("fanRpm").textContent = s.fan_rpm ?? "--";
+      document.getElementById("cpuFanRpm").textContent = s.cpu_fan_rpm ?? "--";
+
+      currentMode = s.fan_mode;
+      document.getElementById("btnAuto").classList.toggle("active", currentMode === "auto");
+      document.getElementById("btnManual").classList.toggle("active", currentMode === "manual");
+      document.getElementById("sliderRow").style.display = currentMode === "manual" ? "flex" : "none";
+      if (currentMode === "manual") {
+        document.getElementById("fanSlider").value = s.fan_percent;
+        document.getElementById("sliderVal").textContent = s.fan_percent + "%";
+      }
+
+      pushHistory(fanHistory, s.fan_percent);
+    }
+
+    pushHistory(tempHistory, s.temps.junction ?? 0);
+    const seriesColor = getComputedStyle(document.documentElement).getPropertyValue("--series-1").trim();
+    drawSparkline(document.getElementById("chartTemp"), tempHistory, seriesColor);
+    drawSparkline(document.getElementById("chartFan"), fanHistory, seriesColor);
+    document.getElementById("chartTempRange").textContent =
+      tempHistory.length ? Math.min(...tempHistory).toFixed(0) + "–" + Math.max(...tempHistory).toFixed(0) + "°C" : "";
+    document.getElementById("chartFanRange").textContent =
+      fanHistory.length ? Math.min(...fanHistory).toFixed(0) + "–" + Math.max(...fanHistory).toFixed(0) + "%" : "";
+  } catch (err) {
+    document.getElementById("connDot").classList.add("off");
+    document.getElementById("connLabel").textContent = "連線失敗";
+    const errorBanner = document.getElementById("errorBanner");
+    errorBanner.textContent = "錯誤：" + err.message;
+    errorBanner.style.display = "block";
+  }
+}
+
+async function setFan(mode, percent) {
+  await fetch("/api/fan", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode, percent }),
+  });
+  refresh();
+}
+
+document.getElementById("btnAuto").addEventListener("click", () => setFan("auto"));
+document.getElementById("btnManual").addEventListener("click", () => {
+  document.getElementById("sliderRow").style.display = "flex";
+  setFan("manual", Number(document.getElementById("fanSlider").value));
+});
+
+const slider = document.getElementById("fanSlider");
+let sliderDebounce;
+slider.addEventListener("input", () => {
+  document.getElementById("sliderVal").textContent = slider.value + "%";
+  clearTimeout(sliderDebounce);
+  sliderDebounce = setTimeout(() => setFan("manual", Number(slider.value)), 250);
+});
+
+refresh();
+pollPullJobs();
+setInterval(refresh, POLL_MS);
+setInterval(pollPullJobs, POLL_MS);
+</script>
+</body>
+</html>

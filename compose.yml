@@ -1,0 +1,26 @@
+services:
+  gpu-monitor:
+    build: .
+    container_name: mi50-monitor
+    restart: unless-stopped
+    security_opt:
+      - apparmor:unconfined
+    ports:
+      - "8008:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # amdgpu fan control (pwm1/pwm1_enable) lives under /sys/devices via a
+      # symlink from /sys/class/hwmon, so the whole tree must be mounted
+      # together (and writable) rather than bind-mounting just the subpath.
+      - /sys:/sys:rw
+    environment:
+      - GPU_NAME=AMD Radeon Instinct MI50 (32GB)
+      - FAN_MIN_PERCENT=20
+      - SAFETY_TEMP_C=90
+      - CRITICAL_TEMP_C=100
+      # The MI50's cooling fan is wired to the motherboard's CPU_FAN header
+      # (nct6775-family Super I/O chip), not the GPU's own fan header.
+      - BOARD_HWMON_NAME=nct6797
+      - GPU_FAN_CHANNEL=2
+      - CPU_FAN_CHANNEL=1
