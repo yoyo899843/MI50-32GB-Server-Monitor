@@ -221,10 +221,9 @@
         </div>
       </div>
       <div class="slider-row" id="sliderRow" style="display:none">
-        <input type="range" id="fanSlider" min="20" max="100" value="50">
+        <input type="range" id="fanSlider" min="0" max="100" value="50">
         <div class="slider-val" id="sliderVal">50%</div>
       </div>
-      <div class="note" id="safetyNote"></div>
     </div>
   </div>
 
@@ -280,7 +279,6 @@ const HISTORY_LEN = 60;
 const tempHistory = [];
 const fanHistory = [];
 let manualPercent = 50;
-let fanMinPercent = 20;
 let currentMode = "auto";
 
 function iconFor(status) {
@@ -523,8 +521,6 @@ async function refresh() {
     connLabel.textContent = "已連線";
 
     document.getElementById("gpuName").textContent = s.name;
-    fanMinPercent = s.fan_min_percent;
-    document.getElementById("fanSlider").min = fanMinPercent;
 
     setTile("tempEdge", "statusEdge", s.temps.edge);
     setTile("tempJunction", "statusJunction", s.temps.junction);
@@ -547,9 +543,6 @@ async function refresh() {
     document.getElementById("fanControls").style.display = s.board_fan_available ? "block" : "none";
 
     if (s.board_fan_available) {
-      document.getElementById("safetyNote").textContent =
-        `安全機制：手動模式下若 Junction 溫度達 ${s.safety_temp_c}°C 會自動拉滿風扇，達 ${s.critical_temp_c}°C 會強制切回自動模式。手動轉速下限 ${fanMinPercent}%。`;
-
       document.getElementById("fanPercent").textContent = s.fan_percent + "%";
       document.getElementById("fanRpm").textContent = s.fan_rpm ?? "--";
       document.getElementById("cpuFanRpm").textContent = s.cpu_fan_rpm ?? "--";

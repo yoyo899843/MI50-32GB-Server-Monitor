@@ -11,9 +11,6 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-FAN_MIN_PERCENT = int(os.environ.get("FAN_MIN_PERCENT", "20"))
-SAFETY_TEMP_C = float(os.environ.get("SAFETY_TEMP_C", "90"))
-CRITICAL_TEMP_C = float(os.environ.get("CRITICAL_TEMP_C", "100"))
 GPU_NAME = os.environ.get("GPU_NAME", "AMD Radeon Instinct MI50 (32GB)")
 
 # The MI50's own fan header is unused (the card is passive); the physical
@@ -32,7 +29,6 @@ OLLAMA_TIMEOUT = float(os.environ.get("OLLAMA_TIMEOUT", "2"))
 gpu = None
 board = None  # {"hwmon": path, "auto_enable_value": <int captured at startup>}
 state_lock = asyncio.Lock()
-last_error = None
 
 # model name -> {"status": str, "completed": int, "total": int, "done": bool, "error": str|None}
 pull_jobs: dict[str, dict] = {}
@@ -100,9 +96,6 @@ def get_stats():
         "vram_used": vram_used,
         "vram_total": vram_total,
         "gpu_busy_percent": read_int(gpu_busy_path) if os.path.exists(gpu_busy_path) else None,
-        "fan_min_percent": FAN_MIN_PERCENT,
-        "safety_temp_c": SAFETY_TEMP_C,
-        "critical_temp_c": CRITICAL_TEMP_C,
         "board_fan_available": board is not None,
     }
 
@@ -230,33 +223,17 @@ async def search_ollama_library(query: str):
 
 
 async def watchdog():
-    """Overrides manual fan control if the GPU gets dangerously hot.
-
-    Also re-probes for the GPU/board sensors on every tick when missing, so
+    """Re-probes for the GPU/board sensors on every tick when missing, so
     a slow-to-load hwmon driver (e.g. nct6775 racing with container start on
     boot) self-heals within one tick instead of needing a container restart.
     """
-    global last_error, gpu, board
+    global gpu, board
     while True:
         await asyncio.sleep(5)
         if gpu is None:
             gpu = find_gpu()
         if board is None:
             board = find_board()
-        if gpu is None or board is None:
-            continue
-        try:
-            async with state_lock:
-                stats = get_stats()
-                junction = stats["temps"].get("junction")
-                if junction is None:
-                    continue
-                if stats["fan_mode"] == "manual" and junction >= CRITICAL_TEMP_C:
-                    set_auto()
-                elif stats["fan_mode"] == "manual" and junction >= SAFETY_TEMP_C and stats["fan_percent"] < 100:
-                    set_pwm(100)
-        except Exception as exc:
-            last_error = str(exc)
 
 
 @asynccontextmanager
@@ -308,7 +285,7 @@ async def api_set_fan(req: FanRequest):
                 set_auto()
             elif req.mode == "manual":
                 percent = req.percent if req.percent is not None else 50
-                percent = max(FAN_MIN_PERCENT, min(100, percent))
+                percent = max(0, min(100, percent))
                 set_pwm(percent)
             else:
                 raise HTTPException(400, "mode must be 'auto' or 'manual'")
