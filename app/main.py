@@ -148,16 +148,19 @@ async def get_ollama_status():
 MODEL_LOAD_TIMEOUT = float(os.environ.get("MODEL_LOAD_TIMEOUT", "300"))
 
 
-async def set_model_keep_alive(model: str, keep_alive):
-    """keep_alive=0 unloads the model now; a duration string (e.g. "10m") loads it.
+async def set_model_keep_alive(model: str, keep_alive=None):
+    """Load with Ollama's default keep-alive, or use 0 to unload immediately.
 
     Large models can take well over a minute to read off disk into VRAM, so
     this needs a generous timeout rather than a short request-latency one.
     """
+    payload = {"model": model, "prompt": "", "stream": False}
+    if keep_alive is not None:
+        payload["keep_alive"] = keep_alive
     async with httpx.AsyncClient(timeout=MODEL_LOAD_TIMEOUT) as client:
         r = await client.post(
             f"{OLLAMA_URL}/api/generate",
-            json={"model": model, "prompt": "", "keep_alive": keep_alive, "stream": False},
+            json=payload,
         )
         r.raise_for_status()
         return r.json()
@@ -306,7 +309,7 @@ class ModelRequest(BaseModel):
 @app.post("/api/models/load")
 async def api_model_load(req: ModelRequest):
     try:
-        await set_model_keep_alive(req.model, "30m")
+        await set_model_keep_alive(req.model)
         return {"ok": True}
     except httpx.HTTPStatusError as exc:
         raise HTTPException(exc.response.status_code, exc.response.text)
