@@ -25,10 +25,14 @@ CPU_FAN_CHANNEL = int(os.environ.get("CPU_FAN_CHANNEL", "1"))
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://host.docker.internal:11434")
 OLLAMA_TIMEOUT = float(os.environ.get("OLLAMA_TIMEOUT", "2"))
+HOST_PROC_PATH = os.environ.get("HOST_PROC_PATH", "/proc")
 
 gpu = None
 board = None  # {"hwmon": path, "auto_enable_value": <int captured at startup>}
 state_lock = asyncio.Lock()
+cpu_sample = None  # (total ticks, idle ticks) from the previous host sample
+cpu_percent = None
+system_stats = {}
 
 # model name -> {"status": str, "completed": int, "total": int, "done": bool, "error": str|None}
 pull_jobs: dict[str, dict] = {}
@@ -82,6 +86,54 @@ def get_temps(hwmon):
     return temps
 
 
+def get_cpu_usage():
+    global cpu_sample, cpu_percent
+    with open(os.path.join(HOST_PROC_PATH, "stat")) as f:
+        fields = f.readline().split()
+    if not fields or fields[0] != "cpu" or len(fields) < 5:
+        raise ValueError("Missing aggregate CPU counters in /proc/stat")
+    # guest and guest_nice are already included in user and nice.
+    ticks = [int(value) for value in fields[1:9]]
+    total = sum(ticks)
+    idle = ticks[3] + (ticks[4] if len(ticks) > 4 else 0)
+    previous = cpu_sample
+    cpu_sample = (total, idle)
+    if previous is None or total < previous[0] or idle < previous[1]:
+        cpu_percent = None
+    elif total > previous[0]:
+        busy = 1 - (idle - previous[1]) / (total - previous[0])
+        cpu_percent = round(max(0, min(100, busy * 100)), 1)
+    return cpu_percent
+
+
+def get_ram_usage():
+    with open(os.path.join(HOST_PROC_PATH, "meminfo")) as f:
+        memory = {}
+        for line in f:
+            key, _, value = line.partition(":")
+            if key in ("MemTotal", "MemAvailable"):
+                memory[key] = int(value.split()[0]) * 1024
+    total = memory["MemTotal"]
+    if total <= 0:
+        raise ValueError("Invalid MemTotal in /proc/meminfo")
+    available = max(0, min(total, memory["MemAvailable"]))
+    used = total - available
+    return {"ram_total": total, "ram_used": used, "ram_percent": round(used / total * 100, 1)}
+
+
+def get_system_stats():
+    result = {"cpu_percent": None, "ram_total": None, "ram_used": None, "ram_percent": None, "errors": {}}
+    try:
+        result["cpu_percent"] = get_cpu_usage()
+    except (OSError, ValueError) as exc:
+        result["errors"]["cpu"] = str(exc)
+    try:
+        result.update(get_ram_usage())
+    except (OSError, ValueError, KeyError, IndexError) as exc:
+        result["errors"]["ram"] = str(exc)
+    return result
+
+
 def get_stats():
     device = gpu["device"]
     gpu_hwmon = gpu["hwmon"]
@@ -97,6 +149,7 @@ def get_stats():
         "vram_total": vram_total,
         "gpu_busy_percent": read_int(gpu_busy_path) if os.path.exists(gpu_busy_path) else None,
         "board_fan_available": board is not None,
+        "system": system_stats,
     }
 
     if board is not None:
@@ -232,9 +285,11 @@ async def watchdog():
     a slow-to-load hwmon driver (e.g. nct6775 racing with container start on
     boot) self-heals within one tick instead of needing a container restart.
     """
-    global gpu, board
+    global gpu, board, system_stats
     while True:
-        await asyncio.sleep(5)
+        await asyncio.sleep(2)
+        # Sample independently of requests so multiple dashboards share one interval.
+        system_stats = get_system_stats()
         if gpu is None:
             gpu = find_gpu()
         if board is None:
@@ -243,9 +298,10 @@ async def watchdog():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global gpu, board
+    global gpu, board, system_stats
     gpu = find_gpu()
     board = find_board()
+    system_stats = get_system_stats()
     task = asyncio.create_task(watchdog())
     yield
     task.cancel()

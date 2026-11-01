@@ -14,7 +14,11 @@ services:
       # symlink from /sys/class/hwmon, so the whole tree must be mounted
       # together (and writable) rather than bind-mounting just the subpath.
       - /sys:/sys:rw
+      # Read CPU and RAM counters from the host rather than container limits.
+      - /proc/stat:/host/proc/stat:ro
+      - /proc/meminfo:/host/proc/meminfo:ro
     environment:
+      - HOST_PROC_PATH=/host/proc
       - GPU_NAME=AMD Radeon Instinct MI50 (32GB)
       - FAN_MIN_PERCENT=20
       - SAFETY_TEMP_C=90

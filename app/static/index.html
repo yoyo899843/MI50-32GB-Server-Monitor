@@ -171,7 +171,7 @@
   <header>
     <div>
       <h1 id="gpuName">GPU Monitor</h1>
-      <div class="sub">即時溫度、顯存與風扇控制</div>
+      <div class="sub">即時 CPU、RAM、GPU 溫度、顯存與風扇控制</div>
     </div>
     <div class="conn"><span class="dot" id="connDot"></span><span id="connLabel">connecting…</span></div>
   </header>
@@ -211,6 +211,23 @@
   </div>
 
   <div class="card">
+    <h2>主機 CPU / RAM</h2>
+    <div class="bar-row">
+      <span class="num">CPU 使用率</span>
+      <span class="num" id="cpuPct">--%</span>
+    </div>
+    <div class="bar-track"><div class="bar-fill" id="cpuBar" style="width:0%"></div></div>
+    <div class="note" id="cpuNote">全核心平均 · 取樣中…</div>
+    <div class="bar-row" style="margin-top:14px">
+      <span class="num">RAM 使用量</span>
+      <span class="num" id="ramPct">--%</span>
+    </div>
+    <div class="bar-row"><span class="num" id="ramNum">-- / -- GB</span></div>
+    <div class="bar-track"><div class="bar-fill" id="ramBar" style="width:0%"></div></div>
+    <div class="note" id="ramNote">以可用記憶體估算使用量</div>
+  </div>
+
+  <div class="card">
     <h2>風扇控制（GPU 散熱風扇 · 主機板 CPU_FAN 接頭）</h2>
     <div id="fanUnavailable" class="note" style="display:none">
       偵測不到主機板感測晶片，無法控制風扇（只能看溫度/VRAM）。請確認主機已載入對應的 hwmon 驅動（例如 <code>modprobe nct6775</code>）。
@@ -244,6 +261,14 @@
       <div>
         <div class="chart-title"><span>風扇轉速</span><span id="chartFanRange" class="sub"></span></div>
         <canvas id="chartFan"></canvas>
+      </div>
+      <div>
+        <div class="chart-title"><span>CPU 使用率</span><span id="chartCpuRange" class="sub"></span></div>
+        <canvas id="chartCpu"></canvas>
+      </div>
+      <div>
+        <div class="chart-title"><span>RAM 使用率</span><span id="chartRamRange" class="sub"></span></div>
+        <canvas id="chartRam"></canvas>
       </div>
     </div>
   </div>
@@ -291,6 +316,8 @@ const POLL_MS = 2000;
 const HISTORY_LEN = 60;
 const tempHistory = [];
 const fanHistory = [];
+const cpuHistory = [];
+const ramHistory = [];
 let manualPercent = 50;
 let currentMode = "auto";
 
@@ -334,8 +361,9 @@ function drawSparkline(canvas, data, color) {
     const y = (h / 3) * i;
     ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
   }
-  if (data.length < 2) return;
-  const min = Math.min(...data), max = Math.max(...data);
+  const values = data.filter(Number.isFinite);
+  if (data.length < 2 || !values.length) return;
+  const min = Math.min(...values), max = Math.max(...values);
   const range = Math.max(max - min, 1);
   const pad = 6;
   ctx.strokeStyle = color;
@@ -343,10 +371,13 @@ function drawSparkline(canvas, data, color) {
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
   ctx.beginPath();
+  let drawing = false;
   data.forEach((v, i) => {
+    if (!Number.isFinite(v)) { drawing = false; return; }
     const x = (i / (HISTORY_LEN - 1)) * w;
     const y = pad + (1 - (v - min) / range) * (h - pad * 2);
-    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    if (!drawing) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    drawing = true;
   });
   ctx.stroke();
 }
@@ -358,6 +389,31 @@ function pushHistory(arr, val) {
 
 function formatGb(bytes) {
   return (bytes / 1024 ** 3).toFixed(1) + " GB";
+}
+
+function renderSystem(system = {}) {
+  const cpu = system.cpu_percent;
+  const ram = system.ram_percent;
+  document.getElementById("cpuPct").textContent = cpu != null ? cpu.toFixed(1) + "%" : "--%";
+  document.getElementById("cpuBar").style.width = (cpu ?? 0) + "%";
+  document.getElementById("cpuNote").textContent = system.errors?.cpu
+    ? "CPU 監測無法讀取：" + system.errors.cpu
+    : (cpu != null ? "全核心平均" : "全核心平均 · 取樣中…");
+  document.getElementById("ramPct").textContent = ram != null ? ram.toFixed(1) + "%" : "--%";
+  document.getElementById("ramNum").textContent = system.ram_total != null && system.ram_used != null
+    ? formatGb(system.ram_used) + " / " + formatGb(system.ram_total) : "-- / -- GB";
+  document.getElementById("ramBar").style.width = (ram ?? 0) + "%";
+  document.getElementById("ramNote").textContent = system.errors?.ram
+    ? "RAM 監測無法讀取：" + system.errors.ram : "以可用記憶體估算使用量";
+
+  const color = getComputedStyle(document.documentElement).getPropertyValue("--series-1").trim();
+  for (const [name, history, value] of [["Cpu", cpuHistory, cpu], ["Ram", ramHistory, ram]]) {
+    pushHistory(history, value ?? null);
+    drawSparkline(document.getElementById("chart" + name), history, color);
+    const values = history.filter(Number.isFinite);
+    document.getElementById("chart" + name + "Range").textContent = values.length
+      ? Math.min(...values).toFixed(1) + "–" + Math.max(...values).toFixed(1) + "%" : "";
+  }
 }
 
 function formatEta(isoString) {
@@ -569,6 +625,7 @@ async function refresh() {
     document.getElementById("gpuUtilPct").textContent = util != null ? util + "%" : "--%";
     document.getElementById("gpuUtilBar").style.width = (util ?? 0) + "%";
 
+    renderSystem(s.system);
     renderOllama(s.ollama);
 
     document.getElementById("fanUnavailable").style.display = s.board_fan_available ? "none" : "block";
