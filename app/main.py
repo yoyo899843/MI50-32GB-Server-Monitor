@@ -9,7 +9,7 @@ from bs4 import BeautifulSoup
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 GPU_NAME = os.environ.get("GPU_NAME", "AMD Radeon Instinct MI50 (32GB)")
 
@@ -148,7 +148,7 @@ async def get_ollama_status():
 MODEL_LOAD_TIMEOUT = float(os.environ.get("MODEL_LOAD_TIMEOUT", "300"))
 
 
-async def set_model_keep_alive(model: str, keep_alive=None):
+async def set_model_keep_alive(model: str, keep_alive=None, *, num_ctx: int | None = None):
     """Load with Ollama's default keep-alive, or use 0 to unload immediately.
 
     Large models can take well over a minute to read off disk into VRAM, so
@@ -157,6 +157,8 @@ async def set_model_keep_alive(model: str, keep_alive=None):
     payload = {"model": model, "prompt": "", "stream": False}
     if keep_alive is not None:
         payload["keep_alive"] = keep_alive
+    if num_ctx is not None:
+        payload["options"] = {"num_ctx": num_ctx}
     async with httpx.AsyncClient(timeout=MODEL_LOAD_TIMEOUT) as client:
         r = await client.post(
             f"{OLLAMA_URL}/api/generate",
@@ -306,10 +308,15 @@ class ModelRequest(BaseModel):
     model: str
 
 
+class ModelLoadRequest(ModelRequest):
+    context_length_k: int | None = Field(default=None, gt=0, strict=True)
+
+
 @app.post("/api/models/load")
-async def api_model_load(req: ModelRequest):
+async def api_model_load(req: ModelLoadRequest):
     try:
-        await set_model_keep_alive(req.model)
+        num_ctx = req.context_length_k * 1024 if req.context_length_k is not None else None
+        await set_model_keep_alive(req.model, num_ctx=num_ctx)
         return {"ok": True}
     except httpx.HTTPStatusError as exc:
         raise HTTPException(exc.response.status_code, exc.response.text)

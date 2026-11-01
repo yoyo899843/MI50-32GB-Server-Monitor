@@ -113,6 +113,13 @@
   .model-tag { font-size: 11px; color: var(--text-secondary); background: var(--gridline); border-radius: 5px; padding: 1px 6px; }
   .model-empty { font-size: 13px; color: var(--text-muted); padding: 6px 0; }
   .model-actions { display: flex; gap: 6px; flex: none; }
+  .model-load-options { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 10px 0; font-size: 12px; }
+  .model-load-options input {
+    width: 110px; border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary);
+    border-radius: 6px; padding: 5px 8px; font-size: 12px; font-family: inherit;
+  }
+  .model-load-options .note { margin: 0; }
+  .model-action-error { color: var(--status-critical); font-size: 12px; margin-top: 8px; }
 
   .btn-sm {
     border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary);
@@ -251,6 +258,12 @@
       <div class="label" style="margin-bottom:6px">執行中的模型</div>
       <div id="ollamaRunning"></div>
       <div class="label" style="margin:14px 0 6px">已下載的模型</div>
+      <div class="model-load-options">
+        <label for="contextLengthK">載入 Context length（K）</label>
+        <input type="number" id="contextLengthK" min="1" step="1" placeholder="預設" aria-describedby="contextLengthHint">
+        <span class="note" id="contextLengthHint">留空使用 Ollama 預設；1 K = 1024 tokens</span>
+      </div>
+      <div id="modelActionError" class="model-action-error" role="alert" hidden></div>
       <div id="ollamaInstalled"></div>
     </div>
   </div>
@@ -408,14 +421,33 @@ function renderOllama(ollama) {
 }
 
 async function modelAction(action, model, btn) {
+  const errorEl = document.getElementById("modelActionError");
+  errorEl.hidden = true;
+  const payload = { model };
+  if (action === "load") {
+    const contextInput = document.getElementById("contextLengthK");
+    if (!contextInput.reportValidity()) return;
+    if (contextInput.value.trim() !== "") {
+      payload.context_length_k = Number(contextInput.value);
+    }
+  }
   if (btn) btn.disabled = true;
   try {
-    await fetch(`/api/models/${action}`, {
+    const res = await fetch(`/api/models/${action}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model }),
+      body: JSON.stringify(payload),
     });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      const detail = Array.isArray(body.detail) ? body.detail.map(e => e.msg).join("；") : body.detail;
+      throw new Error(detail || ("HTTP " + res.status));
+    }
+  } catch (err) {
+    errorEl.textContent = "模型操作失敗：" + err.message;
+    errorEl.hidden = false;
   } finally {
+    if (btn) btn.disabled = false;
     refresh();
   }
 }
